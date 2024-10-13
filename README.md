@@ -35,6 +35,7 @@
 При инициализации ошибки были в "yandex_compute_instance":
 - ```platform_id = "standart-v4"```- отсутсвует v4, можно указать варианты standard v1-3
 - ```cores         = 1```- минимальное количество ядер 2
+
 Параметры ```preemptible``` и ```core_fraction``` помогут сэкономить предоставленный грант на использовании ресурсов:
 - ```preemptible = true``` - прерываемые виртуальные машины стоят дешевле обычных, что позволяет значительно сократить расходы на вычислительные ресурсы в обучающих проектах
 - ```core_fraction = 5``` - указание небольшого значения для ```core_fraction``` (доля процессорного времени) позволяет запускать менее требовательные задачи, оптимизируя использование процессорных ресурсов и снижая затраты
@@ -43,7 +44,43 @@
 
 1. Замените все хардкод-**значения** для ресурсов **yandex_compute_image** и **yandex_compute_instance** на **отдельные** переменные. К названиям переменных ВМ добавьте в начало префикс **vm_web_** .  Пример: **vm_web_name**.
 2. Объявите нужные переменные в файле variables.tf, обязательно указывайте тип переменной. Заполните их **default** прежними значениями из main.tf. 
-3. Проверьте terraform plan. Изменений быть не должно. 
+3. Проверьте terraform plan. Изменений быть не должно.
+
+#### Решение
+Добавил необходимые переменные в variables.tf  
+В main.tf заменил хардкод-значения:
+```go
+resource "yandex_compute_instance" "platform" {
+  name        = var.vm_web_name
+  platform_id = var.vm_web_platform
+  metadata    = var.vm_metadata
+  resources {
+    cores         = var.vm_resources.web.cores
+    memory        = var.vm_resources.web.memory
+    core_fraction = var.vm_resources.web.core_fraction
+  }
+  boot_disk {
+    initialize_params {
+      image_id = data.yandex_compute_image.ubuntu.image_id
+    }
+  }
+  scheduling_policy {
+    preemptible = var.vm_web_policy_preemptible
+  }
+  network_interface {
+    subnet_id = yandex_vpc_subnet.develop.id
+    nat       = var.vm_web_network_nat
+  }
+
+  metadata = {
+    serial-port-enable = var.vm_web_serial_port_enable
+    ssh-keys           = "${var.vm_web_user}:${var.vms_ssh_root_key}"
+  }
+}
+```
+```terraform plan``` подтвердил, что изменений не обнаружено:
+
+![2-1](./02/terraform/3.png)
 
 
 ### Задание 3
@@ -52,6 +89,42 @@
 2. Скопируйте блок ресурса и создайте с его помощью вторую ВМ в файле main.tf: **"netology-develop-platform-db"** ,  ```cores  = 2, memory = 2, core_fraction = 20```. Объявите её переменные с префиксом **vm_db_** в том же файле ('vms_platform.tf').  ВМ должна работать в зоне "ru-central1-b"
 3. Примените изменения.
 
+#### Решение
+Создал vms_platform.tf, перенес в него созданные переменные, а также продублировал с vm_db_ префиксом.
+В main.tf создал новый ресурс yandex_compute_instance "platform-db":
+```go
+resource "yandex_compute_instance" "platform" {
+  name        = var.vm_db_name
+  platform_id = var.vm_db_platform
+  zone        = var.default_zone_b
+  metadata    = var.vm_metadata
+  resources {
+    cores         = var.vm_resources.db.cores
+    memory        = var.vm_resources.db.memory
+    core_fraction = var.vm_resources.db.core_fraction
+  }
+  boot_disk {
+    initialize_params {
+      image_id = data.yandex_compute_image.ubuntu.image_id
+    }
+  }
+  scheduling_policy {
+    preemptible = var.vm_db_policy_preemptible
+  }
+  network_interface {
+    subnet_id = yandex_vpc_subnet.develop-b.id
+    nat       = var.vm_db_network_nat
+  }
+
+  metadata = {
+    serial-port-enable = var.vm_db_serial_port_enable
+    ssh-keys           = "${var.vm_db_user}:${var.vms_ssh_root_key}"
+  }
+}
+```
+
+![3-1](./02/terraform/4.png)
+![3-2](./02/terraform/5.png)
 
 ### Задание 4
 
@@ -60,6 +133,27 @@
 
 В качестве решения приложите вывод значений ip-адресов команды ```terraform output```.
 
+#### Решение
+```go
+output "web_instance_info" {
+  value = {
+    instance_name = yandex_compute_instance.platform.name
+    external_ip   = yandex_compute_instance.platform.network_interface.0.nat_ip_address
+    fqdn          = yandex_compute_instance.platform.fqdn
+  }
+}
+
+output "db_instance_info" {
+  value = {
+    instance_name = yandex_compute_instance.platform-db.name
+    external_ip   = yandex_compute_instance.platform-db.network_interface.0.nat_ip_address
+    fqdn          = yandex_compute_instance.platform-db.fqdn
+  }
+}
+```
+
+![4-1](./02/terraform/6.png)
+
 
 ### Задание 5
 
@@ -67,6 +161,18 @@
 2. Замените переменные внутри ресурса ВМ на созданные вами local-переменные.
 3. Примените изменения.
 
+#### Решение
+```go
+locals {
+  project = "netology-develop-platform"
+  vm_1 = "web"
+  vm_2 = "db"
+  web_name = "${local.project}-${local.vm_1}"
+  db_name = "${local.project}-${local.vm_2}"
+}
+```
+
+![5-1](./02/terraform/7.png)
 
 ### Задание 6
 
@@ -103,6 +209,52 @@
   
 5. Найдите и закоментируйте все, более не используемые переменные проекта.
 6. Проверьте terraform plan. Изменений быть не должно.
+
+#### Решение
+
+```go
+variable "vm_resources" {
+  type        = map(map(number))
+  description = "Resources map for VMs"
+  default = {
+    web = {
+      cores         = 2
+      memory        = 1
+      core_fraction = 5
+    }
+    db = {
+      cores         = 2
+      memory        = 2
+      core_fraction = 20
+    }
+  }
+}
+
+variable "vm_metadata" {
+  type        = map(string)
+  description = "Metadata map for VMs"
+  default = {
+    serial-port-enable = "1"
+    ssh-keys           = "ubuntu:ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP3V6Ux334nbqSrjif2w5hVdsJyPh2Gvc3qYM9tb0fto alex@ubuntu"
+  }
+}
+```
+Использование переменных
+```go
+resource "yandex_compute_instance" "platform-db" {
+  name        = local.db_name
+  platform_id = var.vm_db_platform
+  metadata    = var.vm_metadata
+  zone        = var.default_zone_b
+  resources {
+    cores         = var.vm_resources.db.cores
+    memory        = var.vm_resources.db.memory
+    core_fraction = var.vm_resources.db.core_fraction
+  }
+```
+После комментирования ненужных переменных ```terraform plan``` показал, что изменений нет.
+
+![6-1](./02/terraform/8.png)
 
 ------
 
